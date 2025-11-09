@@ -15,6 +15,7 @@ lightweight visual-first desktop app for organising links and local folder paths
 - **URL/Path** - Website address (e.g., `example.com`) or folder path
 - **Image** (optional) - Custom image URL or browse for local image
 - **Theme Color** (optional) - Hex color for card styling
+- **Favicons** - If no img provided, will attempt to use site's favicon
 
 ### Settings (Right-click menu)
 - **Stacked Mode** - Toggle between grid and list view
