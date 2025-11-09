@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkBoard</title>
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    // Load opacity setting immediately to prevent grey flash
+    try {
+      const savedSettings = localStorage.getItem('linkboardSettings');
+      if (savedSettings) {
+        const settings = JSON.parse(savedSettings);
+        if (settings.canvasOpacity !== undefined) {
+          document.documentElement.style.setProperty('--canvas-opacity', settings.canvasOpacity);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load initial settings:', e);
+    }
+  </script>
+</head>
+<body>
+  <!-- Window background wrapper for rounded corners -->
+  <div class="window-background"></div>
+  
+  <!-- Mode toggle buttons -->
+  <div class="mode-toggle">
+    <button id="webModeBtn" class="mode-btn active" title="Web Links">W</button>
+    <button id="folderModeBtn" class="mode-btn" title="Folder Links">F</button>
+  </div>
+
+  <!-- Visual drag bar -->
+  <div class="drag-bar"></div>
+
+  <!-- Bottom-right corner resize handle -->
+  <div class="resize-handle"></div>
+
+  <!-- Draggable region for moving window -->
+  <div class="drag-region"></div>
+
+  <!-- Window controls for borderless window -->
+  <div class="window-controls">
+    <button id="minimizeBtn" class="window-btn" title="Minimize">−</button>
+    <button id="closeBtn" class="window-btn close" title="Close">×</button>
+  </div>
+
+  <div class="container">
+    <div id="cardsGrid" class="cards-grid">
+      <!-- Cards will be inserted here dynamically -->
+    </div>
+  </div>
+
+  <!-- Custom context menu -->
+  <div id="contextMenu" class="context-menu hidden">
+    <div class="context-item" id="addLinkItem">
+      <span>Add Link</span>
+    </div>
+    <div class="context-divider"></div>
+    <div class="context-item" id="toggleViewItem">
+      <span>Stacked Mode</span>
+      <span class="context-toggle" id="viewToggle">○</span>
+    </div>
+    <div class="context-item" id="toggleAlwaysOnTopItem">
+      <span>Always on Top</span>
+      <span class="context-toggle" id="alwaysOnTopToggle">○</span>
+    </div>
+    <div class="context-item" id="toggleTransparencyItem">
+      <span>Auto-Transparency</span>
+      <span class="context-toggle" id="transparencyToggle">○</span>
+    </div>
+    <div class="context-divider"></div>
+    <div class="context-item-slider">
+      <label for="opacitySlider" style="font-size: 0.85rem; color: #b8b8b8; margin-bottom: 4px; display: block;">Canvas Opacity</label>
+      <input type="range" id="opacitySlider" min="5" max="100" value="100" style="width: 100%;">
+    </div>
+    <div class="context-divider"></div>
+    <div class="context-item" id="minimizeItem">
+      <span>Minimize</span>
+    </div>
+    <div class="context-item" id="closeItem">
+      <span>Close</span>
+    </div>
+  </div>
+
+  <!-- Modal for adding/editing cards -->
+  <div id="cardModal" class="modal hidden">
+    <div class="modal-content">
+      <h2 id="modalTitle">Add Link</h2>
+      <form id="cardForm">
+        <div class="form-group">
+          <label for="cardTitle" id="cardTitleLabel">Title (optional)</label>
+          <input type="text" id="cardTitle" placeholder="My Link">
+        </div>
+
+        <div class="form-group">
+          <label for="cardUrl" id="cardUrlLabel">URL</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="cardUrl" placeholder="https://example.com" required style="flex: 1;">
+            <button type="button" id="pickFolderBtn" class="btn btn-secondary" style="padding: 8px 12px; white-space: nowrap; display: none;">Browse Folder</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="cardImage">Image URL (optional)</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="url" id="cardImage" placeholder="https://example.com/image.jpg" style="flex: 1;">
+            <button type="button" id="pickImageBtn" class="btn btn-secondary" style="padding: 8px 12px; white-space: nowrap;">Browse Image</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="cardThemeColor">Theme Color (optional hex code)</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="cardThemeColor" placeholder="#808080" style="flex: 1;">
+            <input type="color" id="colorPicker" class="color-picker-input" title="Pick a color">
+          </div>
+          <small style="color: #888; font-size: 0.8rem;">Used for title and default card background</small>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" id="cancelBtn" class="btn btn-secondary">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete confirmation modal -->
+  <div id="deleteModal" class="modal hidden">
+    <div class="modal-content" style="max-width: 320px;">
+      <h2>Delete</h2>
+      <p id="deleteMessage" style="color: #b8b8b8; margin: 12px 0 16px 0; font-size: 0.95rem;"></p>
+      <div class="form-actions">
+        <button type="button" id="deleteCancelBtn" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="deleteConfirmBtn" class="btn btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

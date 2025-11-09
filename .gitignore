@@ -1,0 +1,8 @@
+        # Ignore the 'dist' directory
+        dist/
+        node_modules/
+
+        # Ignore specific files
+        BUILD_INSTRUCTIONS.txt
+        BUILD_PACKAGE.zip
+        CHANGELOG.md
