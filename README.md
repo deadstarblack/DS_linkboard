@@ -4,11 +4,12 @@ lightweight visual-first desktop app for organising links and local folder paths
 ## How to Use
 
 ### Basic Operations
-1. **W button** - Switch to Web Links mode (to be implemented)
-2. **F button** - Switch to Folder Paths mode (to be implemented)
-3. **Right-click** on canvas - Add new link/folder or access settings
-4. **Click any card** - Open that website or folder
-5. **Hover over cards** - See Edit (e) and Delete (x) buttons
+1. **W button** - Switch to Web Links mode (implemented)
+2. **F button** - Switch to Folder Paths mode (implemented)
+3. **Left and Right Arrow Key** - Switch Mode Tabs
+4. **Right-click** on canvas - Add new link/folder or access settings
+5. **Click any card** - Open that website or folder
+6. **Hover over cards** - See Edit (e) and Delete (x) buttons
 
 ### Adding Links/Folders
 - **Title** - What you want to call this item
