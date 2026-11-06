@@ -1,0 +1,16 @@
+<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="256" height="256" rx="48" fill="#1a1a1a"/>
+  
+  <!-- Hamburger lines in teal -->
+  <g fill="#4db8b8" opacity="0.9">
+    <!-- Top line -->
+    <rect x="48" y="76" width="160" height="20" rx="10"/>
+    
+    <!-- Middle line -->
+    <rect x="48" y="118" width="160" height="20" rx="10"/>
+    
+    <!-- Bottom line -->
+    <rect x="48" y="160" width="160" height="20" rx="10"/>
+  </g>
+</svg>

@@ -21,7 +21,7 @@ body {
   overflow-x: hidden;
   overflow-y: auto; /* Enable vertical scrolling */
   margin: 0;
-  padding: 0 16px 0 0;
+  padding: 0;
   position: relative;
   height: 100vh;
 }
@@ -54,6 +54,11 @@ body:hover {
 
 body.transparent-mode {
   opacity: 0.5;
+}
+
+body.resizing {
+  cursor: nwse-resize;
+  user-select: none;
 }
 
 /* Mode toggle buttons */
@@ -150,7 +155,7 @@ body:hover .resize-handle,
 
 /* Custom scrollbar - thin and subtle */
 body::-webkit-scrollbar {
-  width: 10px;
+  width: 6px;
 }
 
 body::-webkit-scrollbar-track {
@@ -169,7 +174,6 @@ body:hover::-webkit-scrollbar-thumb {
 
 body::-webkit-scrollbar-thumb:hover {
   background: rgba(74, 74, 74, 0.6);
-}
 }
 
 /* Draggable region for window movement */
@@ -224,7 +228,7 @@ body::-webkit-scrollbar-thumb:hover {
 .container {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 32px 8px 20px 8px; /* Much tighter side padding */
+  padding: 32px 12px 20px 12px; /* Symmetrical side padding */
   min-height: 100vh; /* Ensure content is tall enough to trigger scrolling */
 }
 
@@ -250,22 +254,15 @@ body::-webkit-scrollbar-thumb:hover {
   flex-direction: column;
 }
 
-/* Animation only for initial load and mode switch */
+/* Animation only for initial load and mode switch (staggered via --card-index set inline) */
 .card.card-animate {
   animation: cardFadeIn 0.3s ease-out backwards;
+  animation-delay: calc((var(--card-index, 0) + 1) * 0.02s);
 }
 
-/* Staggered animation for animated cards */
-.card.card-animate:nth-child(1) { animation-delay: 0.02s; }
-.card.card-animate:nth-child(2) { animation-delay: 0.04s; }
-.card.card-animate:nth-child(3) { animation-delay: 0.06s; }
-.card.card-animate:nth-child(4) { animation-delay: 0.08s; }
-.card.card-animate:nth-child(5) { animation-delay: 0.10s; }
-.card.card-animate:nth-child(6) { animation-delay: 0.12s; }
-.card.card-animate:nth-child(7) { animation-delay: 0.14s; }
-.card.card-animate:nth-child(8) { animation-delay: 0.16s; }
-.card.card-animate:nth-child(9) { animation-delay: 0.18s; }
-.card.card-animate:nth-child(10) { animation-delay: 0.20s; }
+.card.dragging {
+  opacity: 0.4;
+}
 
 @keyframes cardFadeIn {
   from {
@@ -338,12 +335,6 @@ body::-webkit-scrollbar-thumb:hover {
   white-space: nowrap;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
   text-align: left;
-}
-
-.card-url-large {
-  font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.5);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
 .card-actions {
@@ -750,81 +741,8 @@ body::-webkit-scrollbar-thumb:hover {
   pointer-events: none;
 }
 
-/* Drag indicators */
-.card.drag-over-top {
-  border-top: 3px solid #ff4466;
-}
-
-.card.drag-over-bottom {
-  border-bottom: 3px solid #ff4466;
-}
-
-/* Section styles */
-.section {
-  margin-bottom: 10px;
-}
-
-.section:first-child .section-header {
-  border-top-left-radius: 6px;
-  border-top-right-radius: 6px;
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: background 0.2s;
-  user-select: none;
-}
-
-.section-header:hover {
-  background: #2a2a2a;
-}
-
-.section-header.drag-over {
-  background: #3a3a3a;
-  border: 2px dashed #5eb5b4;
-}
-
-.section-chevron {
-  font-size: 0.7rem;
-  color: #888;
-  transition: transform 0.2s;
-  width: 12px;
-}
-
-.section-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  flex: 1;
-}
-
-.section-count {
-  font-size: 0.8rem;
-  color: #666;
-}
-
-.section-content {
-  display: grid;
-  gap: 20px;
-  padding: 10px 0 0 0;
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.3s ease;
-}
-
-.section-content.open {
-  max-height: 5000px;
-}
-
-.section-content-grid {
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-}
-
-.section-content-compact {
-  grid-template-columns: 1fr;
-  gap: 12px;
-}
+/* Drag indicators: top/bottom in stacked mode, left/right in grid mode */
+.card.drag-over-top { box-shadow: inset 0 3px 0 #ff4466, 0 4px 6px rgba(0, 0, 0, 0.3); }
+.card.drag-over-bottom { box-shadow: inset 0 -3px 0 #ff4466, 0 4px 6px rgba(0, 0, 0, 0.3); }
+.card.drag-over-left { box-shadow: inset 3px 0 0 #ff4466, 0 4px 6px rgba(0, 0, 0, 0.3); }
+.card.drag-over-right { box-shadow: inset -3px 0 0 #ff4466, 0 4px 6px rgba(0, 0, 0, 0.3); }

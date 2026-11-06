@@ -1,20 +1,22 @@
 const { shell, ipcRenderer } = require('electron');
+const { pathToFileURL } = require('url');
 
-// State management
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 let webCards = [];
 let folderCards = [];
 let activeMode = 'web'; // 'web' or 'folders'
 let editingCardId = null;
 let draggedCardId = null;
+let pendingDeleteId = null;
 let settings = {
   stackedMode: false,
   alwaysOnTop: false,
   autoTransparency: false,
-  canvasOpacity: 1.0,
-  themeColor: '#5eb5b4'
+  canvasOpacity: 1.0
 };
 
-// Get active cards based on mode
 function getActiveCards() {
   return activeMode === 'web' ? webCards : folderCards;
 }
@@ -27,14 +29,15 @@ function setActiveCards(cards) {
   }
 }
 
+// ---------------------------------------------------------------------------
 // DOM elements
+// ---------------------------------------------------------------------------
 const cardsGrid = document.getElementById('cardsGrid');
 const cardModal = document.getElementById('cardModal');
 const cardForm = document.getElementById('cardForm');
 const cancelBtn = document.getElementById('cancelBtn');
 const modalTitle = document.getElementById('modalTitle');
 const cardTitleInput = document.getElementById('cardTitle');
-const cardTitleLabel = document.getElementById('cardTitleLabel');
 const cardUrlInput = document.getElementById('cardUrl');
 const cardUrlLabel = document.getElementById('cardUrlLabel');
 const cardImageInput = document.getElementById('cardImage');
@@ -48,8 +51,74 @@ const contextMenu = document.getElementById('contextMenu');
 const minimizeBtn = document.getElementById('minimizeBtn');
 const closeBtn = document.getElementById('closeBtn');
 const opacitySlider = document.getElementById('opacitySlider');
+const deleteModal = document.getElementById('deleteModal');
+const deleteMessage = document.getElementById('deleteMessage');
+const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
+const deleteCancelBtn = document.getElementById('deleteCancelBtn');
+const viewToggle = document.getElementById('viewToggle');
+const alwaysOnTopToggle = document.getElementById('alwaysOnTopToggle');
+const transparencyToggle = document.getElementById('transparencyToggle');
+const resizeHandle = document.querySelector('.resize-handle');
 
-// Load cards from localStorage on startup
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// Escape text before inserting into innerHTML so titles/paths containing
+// quotes or angle brackets can't break the card markup.
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeParse(json, fallback) {
+  try {
+    const parsed = JSON.parse(json);
+    return parsed === null || parsed === undefined ? fallback : parsed;
+  } catch (e) {
+    console.error('Failed to parse saved data:', e);
+    return fallback;
+  }
+}
+
+function isValidCssColor(value) {
+  if (!value) return false;
+  return CSS.supports('color', value);
+}
+
+function nonEmpty(value) {
+  return value && value.trim() !== '' ? value.trim() : null;
+}
+
+// Accept either a URL or a local file path for card images
+function normaliseImageSource(value) {
+  const v = nonEmpty(value);
+  if (!v) return null;
+  // Local path first: a Windows drive letter ("C:\...") would otherwise look like a URL scheme
+  if (/^([a-z]:[\\/]|\\\\|\/)/i.test(v)) {
+    try {
+      return pathToFileURL(v).href;
+    } catch (e) {
+      return v;
+    }
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return v; // already has a scheme (http, https, file, data)
+  return 'https://' + v;
+}
+
+function normaliseWebUrl(value) {
+  const v = value.trim();
+  if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return v; // keep http, https, mailto, etc.
+  return 'https://' + v;
+}
+
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
 function loadCards() {
   // Migrate old single-array cards to web cards
   const oldCards = localStorage.getItem('linkboardCards');
@@ -57,501 +126,420 @@ function loadCards() {
     localStorage.setItem('linkboardWebCards', oldCards);
     localStorage.removeItem('linkboardCards');
   }
-  
-  const savedWebCards = localStorage.getItem('linkboardWebCards');
-  const savedFolderCards = localStorage.getItem('linkboardFolderCards');
+  localStorage.removeItem('linkboardSections'); // obsolete data from an older version
+
+  webCards = safeParse(localStorage.getItem('linkboardWebCards'), []);
+  folderCards = safeParse(localStorage.getItem('linkboardFolderCards'), []);
+  if (!Array.isArray(webCards)) webCards = [];
+  if (!Array.isArray(folderCards)) folderCards = [];
+
   const savedMode = localStorage.getItem('linkboardActiveMode');
-  
-  if (savedWebCards) {
-    webCards = JSON.parse(savedWebCards);
-  }
-  
-  if (savedFolderCards) {
-    folderCards = JSON.parse(savedFolderCards);
-  }
-  
-  if (savedMode) {
+  if (savedMode === 'web' || savedMode === 'folders') {
     activeMode = savedMode;
   }
-  
-  updateModeUI();
-  
-  // Clear old sections data
-  localStorage.removeItem('linkboardSections');
-  
-  const savedSettings = localStorage.getItem('linkboardSettings');
-  if (savedSettings) {
-    const parsed = JSON.parse(savedSettings);
-    // Merge saved settings with defaults to ensure all properties exist
-    settings = {
-      ...settings,
-      ...parsed
-    };
+
+  const savedSettings = safeParse(localStorage.getItem('linkboardSettings'), null);
+  if (savedSettings && typeof savedSettings === 'object') {
+    settings = { ...settings, ...savedSettings };
     // Migrate old compactMode to stackedMode
     if (settings.compactMode !== undefined) {
       settings.stackedMode = settings.compactMode;
       delete settings.compactMode;
     }
+    delete settings.themeColor; // unused legacy setting
+    const opacity = Number(settings.canvasOpacity);
+    settings.canvasOpacity = Number.isFinite(opacity) ? Math.min(1, Math.max(0.05, opacity)) : 1;
   }
-  
-  // Always apply settings (will use defaults if no saved settings)
+
+  updateModeUI();
   applySettings();
   renderCards(true); // Animate on initial load
 }
 
-// Save cards to localStorage
 function saveCards() {
   localStorage.setItem('linkboardWebCards', JSON.stringify(webCards));
   localStorage.setItem('linkboardFolderCards', JSON.stringify(folderCards));
   localStorage.setItem('linkboardActiveMode', activeMode);
 }
 
-// Save settings to localStorage
 function saveSettings() {
   localStorage.setItem('linkboardSettings', JSON.stringify(settings));
 }
 
-// Update mode UI
+// ---------------------------------------------------------------------------
+// Mode + settings UI
+// ---------------------------------------------------------------------------
 function updateModeUI() {
-  if (activeMode === 'web') {
-    webModeBtn.classList.add('active');
-    folderModeBtn.classList.remove('active');
-    cardUrlLabel.textContent = 'URL';
-    cardUrlInput.placeholder = 'https://example.com';
-    cardTitleInput.placeholder = 'My Link';
-    pickFolderBtn.style.display = 'none';
-  } else {
-    folderModeBtn.classList.add('active');
-    webModeBtn.classList.remove('active');
-    cardUrlLabel.textContent = 'Folder Path';
-    cardUrlInput.placeholder = 'C:\\Projects\\MyProject';
-    cardTitleInput.placeholder = 'My Folder';
-    pickFolderBtn.style.display = 'block';
-  }
+  const isWeb = activeMode === 'web';
+  webModeBtn.classList.toggle('active', isWeb);
+  folderModeBtn.classList.toggle('active', !isWeb);
+  cardUrlLabel.textContent = isWeb ? 'URL' : 'Folder Path';
+  cardUrlInput.placeholder = isWeb ? 'https://example.com' : 'C:\\Projects\\MyProject';
+  cardTitleInput.placeholder = isWeb ? 'My Link' : 'My Folder';
+  pickFolderBtn.style.display = isWeb ? 'none' : 'block';
 }
 
-// Switch mode
-// Switch mode
 function switchMode(newMode) {
+  if (newMode === activeMode) return;
   activeMode = newMode;
   updateModeUI();
   saveCards();
   renderCards(true); // Animate on mode switch
 }
 
-// Apply settings to UI
 function applySettings() {
-  // Stacked mode
-  if (settings.stackedMode) {
-    cardsGrid.classList.add('compact');
-    document.getElementById('viewToggle').classList.add('active');
-    document.getElementById('viewToggle').classList.add('active');
-  } else {
-    cardsGrid.classList.remove('compact');
-    document.getElementById('viewToggle').classList.add('active');
-    document.getElementById('viewToggle').classList.remove('active');
-  }
-  
-  // Canvas opacity
+  cardsGrid.classList.toggle('compact', settings.stackedMode);
+  viewToggle.classList.toggle('active', settings.stackedMode);
+
   document.documentElement.style.setProperty('--canvas-opacity', settings.canvasOpacity);
-  if (opacitySlider) {
-    opacitySlider.value = settings.canvasOpacity * 100;
-  }
-  
-  // Always on top
-  if (settings.alwaysOnTop) {
-    ipcRenderer.send('toggle-always-on-top', true);
-    document.getElementById('alwaysOnTopToggle').classList.add('active');
-    document.getElementById('alwaysOnTopToggle').classList.add('active');
-  } else {
-    ipcRenderer.send('toggle-always-on-top', false);
-    document.getElementById('alwaysOnTopToggle').classList.add('active');
-    document.getElementById('alwaysOnTopToggle').classList.remove('active');
-  }
-  
-  // Auto transparency
-  if (settings.autoTransparency) {
-    document.getElementById('transparencyToggle').classList.add('active');
-    document.getElementById('transparencyToggle').classList.add('active');
-  } else {
-    document.getElementById('transparencyToggle').classList.add('active');
-    document.getElementById('transparencyToggle').classList.remove('active');
+  opacitySlider.value = Math.round(settings.canvasOpacity * 100);
+
+  ipcRenderer.send('toggle-always-on-top', settings.alwaysOnTop);
+  alwaysOnTopToggle.classList.toggle('active', settings.alwaysOnTop);
+
+  transparencyToggle.classList.toggle('active', settings.autoTransparency);
+  if (!settings.autoTransparency) {
+    document.body.classList.remove('transparent-mode');
   }
 }
 
-// Render all cards to the grid
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+function getCardLabel(card) {
+  if (activeMode === 'web') {
+    try {
+      return new URL(card.url).hostname || card.url;
+    } catch (e) {
+      return card.url;
+    }
+  }
+  // For folder paths, show just the folder name
+  return card.url.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || card.url;
+}
+
+function getFaviconUrl(card) {
+  if (activeMode !== 'web') return '';
+  try {
+    const hostname = new URL(card.url).hostname;
+    return hostname ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=128` : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function renderCard(card, index, animate) {
+  const themeColor = isValidCssColor(card.themeColor) ? card.themeColor : null;
+  const background = card.image || !themeColor ? '#0a0a0a' : themeColor;
+  const titleColor = themeColor || '#d0d0d0';
+  const title = nonEmpty(card.title);
+  const label = getCardLabel(card);
+  const faviconUrl = getFaviconUrl(card);
+  const showLabel = activeMode === 'web' || !title;
+
+  const classes = ['card'];
+  if (settings.stackedMode) classes.push('compact');
+  if (animate) classes.push('card-animate');
+
+  let media = '';
+  if (card.image) {
+    media = `<img src="${escapeHtml(card.image)}" alt="" class="card-image" draggable="false">`;
+  } else if (faviconUrl) {
+    const faviconClass = settings.stackedMode ? 'card-favicon' : 'card-favicon-standard';
+    media = `<img src="${escapeHtml(faviconUrl)}" alt="" class="${faviconClass}" draggable="false">`;
+  }
+
+  return `
+    <div class="${classes.join(' ')}" data-id="${escapeHtml(card.id)}" draggable="true"
+         style="background: ${escapeHtml(background)}; --card-index: ${Math.min(index, 20)};"
+         title="${escapeHtml(card.url)}">
+      <div class="card-actions">
+        <button class="card-btn" data-action="edit" title="Edit">e</button>
+        <button class="card-btn" data-action="delete" title="Delete">x</button>
+      </div>
+      ${media}
+      <div class="card-content">
+        ${title ? `<div class="card-title" style="color: ${escapeHtml(titleColor)};">${escapeHtml(title)}</div>` : ''}
+        ${showLabel ? `<div class="card-url">${escapeHtml(label)}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// Broken images (offline favicons, moved files) are removed so the theme colour shows through.
+// "error" does not bubble, so listen in the capture phase.
+cardsGrid.addEventListener('error', (e) => {
+  if (e.target.tagName === 'IMG') e.target.remove();
+}, true);
+
 function renderCards(animate = false) {
   const cards = getActiveCards();
-  
+
   if (cards.length === 0) {
-    const emptyMessage = activeMode === 'web' ? 'No web links yet' : 'No folder links yet';
+    const isWeb = activeMode === 'web';
     cardsGrid.innerHTML = `
       <div class="empty-state" style="grid-column: 1 / -1;">
-        <h2>${emptyMessage}</h2>
-        <p>Right-click to add your first ${activeMode === 'web' ? 'link' : 'folder'}</p>
+        <h2>${isWeb ? 'No web links yet' : 'No folder links yet'}</h2>
+        <p>Right-click to add your first ${isWeb ? 'link' : 'folder'}</p>
       </div>
     `;
     return;
   }
 
-  const stackedClass = settings.stackedMode ? 'compact' : '';
-  const animateClass = animate ? 'card-animate' : '';
-  
-  cardsGrid.innerHTML = cards.map(card => {
-    // Default to black background and white text if no theme color
-    const themeColor = card.themeColor || '#0a0a0a';
-    const titleColor = card.themeColor || '#d0d0d0';
-    const hasTitle = card.title && card.title.trim() !== '';
-    
-    // Handle both web URLs and folder paths
-    let hostname;
-    let faviconUrl = '';
-    if (activeMode === 'web') {
-      try {
-        hostname = new URL(card.url).hostname;
-        faviconUrl = `https://www.google.com/s2/favicons?domain=${hostname}&sz=128`;
-      } catch (e) {
-        hostname = card.url;
-      }
-    } else {
-      // For folder paths, extract just the folder name
-      hostname = card.url.split(/[\\\/]/).pop() || card.url;
-      // No favicon for folder paths
-    }
-    const imageUrl = card.image || faviconUrl;
-    
-    if (settings.stackedMode) {
-      return `
-        <div class="card ${stackedClass} ${animateClass}" data-id="${card.id}" data-url="${card.url}" draggable="true" style="${card.image ? 'background: #0a0a0a;' : `background: ${themeColor};`}">
-          <div class="card-actions" onclick="event.stopPropagation();">
-            <button class="card-btn edit-btn" onclick="event.stopPropagation(); editCard('${card.id}')" title="Edit">e</button>
-            <button class="card-btn delete-btn" onclick="event.stopPropagation(); deleteCard('${card.id}')" title="Delete">x</button>
-          </div>
-          ${card.image ? 
-            `<img src="${card.image}" alt="${card.title || hostname}" class="card-image" onerror="this.parentElement.style.background='#0a0a0a'; this.style.display='none'">` : 
-            `<div class="card-image" style="background: ${themeColor};"></div>`
-          }
-          ${!card.image && activeMode === 'web' && faviconUrl ? `<img src="${faviconUrl}" alt="${hostname}" class="card-favicon" onerror="this.style.display='none'">` : ''}
-          <div class="card-content">
-            ${hasTitle ? `<div class="card-title" style="color: ${titleColor};">${card.title}</div>` : ''}
-            ${activeMode === 'web' || !hasTitle ? `<div class="card-url ${!hasTitle ? 'card-url-large' : ''}">${hostname}</div>` : ''}
-          </div>
-        </div>
-      `;
-    } else {
-      return `
-        <div class="card ${stackedClass} ${animateClass}" data-id="${card.id}" data-url="${card.url}" draggable="true" style="${card.image ? 'background: #0a0a0a;' : `background: ${themeColor};`}">
-          <div class="card-actions" onclick="event.stopPropagation();">
-            <button class="card-btn edit-btn" onclick="event.stopPropagation(); editCard('${card.id}')" title="Edit">e</button>
-            <button class="card-btn delete-btn" onclick="event.stopPropagation(); deleteCard('${card.id}')" title="Delete">x</button>
-          </div>
-          ${card.image ? 
-            `<img src="${card.image}" alt="${card.title || hostname}" class="card-image" onerror="this.style.display='none'; this.parentElement.style.background='#0a0a0a';">` : 
-            (activeMode === 'web' && faviconUrl ? `<img src="${faviconUrl}" alt="${hostname}" class="card-favicon-standard" onerror="this.style.display='none';">` : '')
-          }
-          <div class="card-content">
-            ${hasTitle ? `<div class="card-title" style="color: ${titleColor};">${card.title}</div>` : ''}
-            ${activeMode === 'web' || !hasTitle ? `<div class="card-url ${!hasTitle ? 'card-url-large' : ''}">${hostname}</div>` : ''}
-          </div>
-        </div>
-      `;
-    }
-  }).join('');
-  
-  // Attach drag event listeners
-  attachDragListeners();
+  cardsGrid.innerHTML = cards.map((card, i) => renderCard(card, i, animate)).join('');
 }
 
-// Open link in default browser or folder in Explorer/Finder
-function openLink(path) {
-  // Prevent transparency and keep window visible
+// ---------------------------------------------------------------------------
+// Opening links
+// ---------------------------------------------------------------------------
+let openingLinkTimer = null;
+function openLink(target) {
+  // Prevent auto-transparency from kicking in while the other app takes focus
   window.isOpeningLink = true;
   document.body.classList.remove('transparent-mode');
-  
-  // Tell main process we're opening a link SYNCHRONOUSLY (prevents window from disappearing)
-  // This ensures always-on-top is set BEFORE the link opens
+
+  // Tell main process synchronously so always-on-top is set BEFORE the link opens
   try {
     ipcRenderer.sendSync('opening-link');
   } catch (e) {
-    console.error('Failed to set window always on top:', e);
+    console.error('Failed to notify main process:', e);
   }
-  
-  if (activeMode === 'web') {
-    shell.openExternal(path);
-  } else {
-    shell.openPath(path);
-  }
-  
-  // Reset flag after a delay
-  setTimeout(() => {
+
+  const result = activeMode === 'web' ? shell.openExternal(target) : shell.openPath(target);
+  Promise.resolve(result).then((err) => {
+    if (typeof err === 'string' && err) {
+      console.error('Failed to open:', target, err);
+    }
+  }).catch((e) => console.error('Failed to open:', target, e));
+
+  clearTimeout(openingLinkTimer);
+  openingLinkTimer = setTimeout(() => {
     window.isOpeningLink = false;
   }, 2000);
 }
 
-// Show modal for adding new card
+// ---------------------------------------------------------------------------
+// Add / edit modal
+// ---------------------------------------------------------------------------
 function showAddModal() {
   editingCardId = null;
-  modalTitle.textContent = 'Add Link';
+  modalTitle.textContent = activeMode === 'web' ? 'Add Link' : 'Add Folder';
   cardForm.reset();
   colorPicker.value = '#808080';
   cardModal.classList.remove('hidden');
   cardTitleInput.focus();
 }
 
-// Show modal for editing existing card
 function showEditModal(card) {
   editingCardId = card.id;
-  modalTitle.textContent = 'Edit Link';
+  modalTitle.textContent = activeMode === 'web' ? 'Edit Link' : 'Edit Folder';
   cardTitleInput.value = card.title || '';
   cardUrlInput.value = card.url;
   cardImageInput.value = card.image || '';
   cardThemeColorInput.value = card.themeColor || '';
-  colorPicker.value = card.themeColor || '#5eb5b4'; // Default color for picker only
+  colorPicker.value = /^#[0-9a-f]{6}$/i.test(card.themeColor || '') ? card.themeColor : '#5eb5b4';
   cardModal.classList.remove('hidden');
   cardTitleInput.focus();
 }
 
-// Hide modal
 function hideModal() {
   cardModal.classList.add('hidden');
   cardForm.reset();
   editingCardId = null;
 }
 
-// Add new card
-// Add new card
+function buildCardFields(cardData) {
+  return {
+    title: nonEmpty(cardData.title),
+    url: cardData.url,
+    image: normaliseImageSource(cardData.image),
+    themeColor: nonEmpty(cardData.themeColor)
+  };
+}
+
 function addCard(cardData) {
   const cards = getActiveCards();
-  const newCard = {
-    id: Date.now().toString(),
-    title: (cardData.title && cardData.title.trim() !== '') ? cardData.title : null,
-    url: cardData.url,
-    image: (cardData.image && cardData.image.trim() !== '') ? cardData.image : null,
-    themeColor: (cardData.themeColor && cardData.themeColor.trim() !== '') ? cardData.themeColor : null
-  };
-  cards.push(newCard);
+  cards.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ...buildCardFields(cardData) });
   setActiveCards(cards);
   saveCards();
   renderCards();
 }
 
-// Update existing card
-// Update existing card
 function updateCard(id, cardData) {
   const cards = getActiveCards();
   const index = cards.findIndex(c => c.id === id);
-  if (index !== -1) {
-    cards[index] = {
-      ...cards[index],
-      title: (cardData.title && cardData.title.trim() !== '') ? cardData.title : null,
-      url: cardData.url,
-      image: (cardData.image && cardData.image.trim() !== '') ? cardData.image : null,
-      themeColor: (cardData.themeColor && cardData.themeColor.trim() !== '') ? cardData.themeColor : null
-    };
-    setActiveCards(cards);
-    saveCards();
-    renderCards();
-  }
-}
-
-// Drag and drop handlers
-function attachDragListeners() {
-  const cardElements = document.querySelectorAll('.card[draggable="true"]');
-  
-  cardElements.forEach(card => {
-    // Remove old listeners to prevent duplicates
-    card.removeEventListener('dragstart', handleDragStart);
-    card.removeEventListener('dragend', handleDragEnd);
-    card.removeEventListener('dragover', handleCardDragOver);
-    card.removeEventListener('drop', handleCardDrop);
-    card.removeEventListener('click', handleCardClick);
-    
-    // Add fresh listeners
-    card.addEventListener('dragstart', handleDragStart);
-    card.addEventListener('dragend', handleDragEnd);
-    card.addEventListener('dragover', handleCardDragOver);
-    card.addEventListener('drop', handleCardDrop);
-    card.addEventListener('click', handleCardClick);
-  });
-}
-
-function handleCardClick(e) {
-  // Don't open link if clicking on action buttons
-  if (e.target.closest('.card-actions')) {
-    return;
-  }
-  
-  const card = e.currentTarget;
-  const url = card.dataset.url;
-  if (url) {
-    openLink(url);
-  }
-}
-
-function handleDragStart(e) {
-  const card = e.currentTarget;
-  draggedCardId = card.dataset.id;
-  card.style.opacity = '0.4';
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/html', card.innerHTML);
-}
-
-function handleDragEnd(e) {
-  const card = e.currentTarget;
-  card.style.opacity = '1';
-  
-  // Remove all highlights and indicators
-  document.querySelectorAll('.card').forEach(c => {
-    c.classList.remove('drag-over-top', 'drag-over-bottom');
-  });
-  
-  draggedCardId = null;
-}
-
-function reorderCards(draggedId, targetId, insertBefore) {
-  const cards = getActiveCards();
-  const draggedIndex = cards.findIndex(c => c.id === draggedId);
-  const targetIndex = cards.findIndex(c => c.id === targetId);
-  
-  if (draggedIndex === -1 || targetIndex === -1) return;
-  
-  const draggedCard = cards[draggedIndex];
-  cards.splice(draggedIndex, 1);
-  
-  const newTargetIndex = cards.findIndex(c => c.id === targetId);
-  if (insertBefore) {
-    cards.splice(newTargetIndex, 0, draggedCard);
-  } else {
-    cards.splice(newTargetIndex + 1, 0, draggedCard);
-  }
-  
+  if (index === -1) return;
+  cards[index] = { ...cards[index], ...buildCardFields(cardData) };
   setActiveCards(cards);
   saveCards();
   renderCards();
 }
 
-function handleCardDragOver(e) {
-  if (e.preventDefault) {
-    e.preventDefault();
-  }
-  
-  const targetCard = e.target.closest('.card');
-  if (!targetCard || targetCard.dataset.id === draggedCardId) return;
-  
-  e.dataTransfer.dropEffect = 'move';
-  
-  // Determine if we're hovering over top or bottom half
-  const rect = targetCard.getBoundingClientRect();
-  const midpoint = rect.top + rect.height / 2;
-  
-  // Clear previous indicators
-  document.querySelectorAll('.card').forEach(c => {
-    c.classList.remove('drag-over-top', 'drag-over-bottom');
-  });
-  
-  if (e.clientY < midpoint) {
-    targetCard.classList.add('drag-over-top');
-  } else {
-    targetCard.classList.add('drag-over-bottom');
-  }
-  
-  return false;
-}
-
-function handleCardDrop(e) {
-  if (e.stopPropagation) {
-    e.stopPropagation();
-  }
-  
-  const targetCard = e.target.closest('.card');
-  if (!targetCard || !draggedCardId) return;
-  
-  const targetCardId = targetCard.dataset.id;
-  if (targetCardId === draggedCardId) return;
-  
-  // Determine position
-  const rect = targetCard.getBoundingClientRect();
-  const midpoint = rect.top + rect.height / 2;
-  const insertBefore = e.clientY < midpoint;
-  
-  reorderCards(draggedCardId, targetCardId, insertBefore);
-  
-  return false;
-}
 function editCard(id) {
-  const cards = getActiveCards();
-  const card = cards.find(c => c.id === id);
-  if (card) {
-    showEditModal(card);
-  }
+  const card = getActiveCards().find(c => c.id === id);
+  if (card) showEditModal(card);
 }
 
-// Delete card with confirmation
+// ---------------------------------------------------------------------------
+// Delete modal (listeners attached once; the target id is tracked in state)
+// ---------------------------------------------------------------------------
 function deleteCard(id) {
-  const cards = getActiveCards();
-  const card = cards.find(c => c.id === id);
+  const card = getActiveCards().find(c => c.id === id);
   if (!card) return;
-  
-  // Show custom delete modal
-  const deleteModal = document.getElementById('deleteModal');
-  const deleteMessage = document.getElementById('deleteMessage');
-  const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
-  const deleteCancelBtn = document.getElementById('deleteCancelBtn');
-  
-  deleteMessage.textContent = `Delete "${card.title || 'this item'}"?`;
+  pendingDeleteId = id;
+  deleteMessage.textContent = `Delete "${card.title || getCardLabel(card)}"?`;
   deleteModal.classList.remove('hidden');
-  
-  // Clean up function to remove both listeners
-  const cleanup = () => {
-    deleteConfirmBtn.removeEventListener('click', confirmHandler);
-    deleteCancelBtn.removeEventListener('click', cancelHandler);
-  };
-  
-  // Handle confirmation
-  const confirmHandler = () => {
-    setActiveCards(cards.filter(c => c.id !== id));
+  deleteConfirmBtn.focus();
+}
+
+function hideDeleteModal() {
+  pendingDeleteId = null;
+  deleteModal.classList.add('hidden');
+}
+
+deleteConfirmBtn.addEventListener('click', () => {
+  if (pendingDeleteId !== null) {
+    setActiveCards(getActiveCards().filter(c => c.id !== pendingDeleteId));
     saveCards();
     renderCards();
-    deleteModal.classList.add('hidden');
-    cleanup();
-  };
-  
-  // Handle cancel
-  const cancelHandler = () => {
-    deleteModal.classList.add('hidden');
-    cleanup();
-  };
-  
-  // Add listeners
-  deleteConfirmBtn.addEventListener('click', confirmHandler);
-  deleteCancelBtn.addEventListener('click', cancelHandler);
+  }
+  hideDeleteModal();
+});
+
+deleteCancelBtn.addEventListener('click', hideDeleteModal);
+
+deleteModal.addEventListener('click', (e) => {
+  if (e.target === deleteModal) hideDeleteModal();
+});
+
+// ---------------------------------------------------------------------------
+// Card interaction (event delegation: survives re-renders, no per-card wiring)
+// ---------------------------------------------------------------------------
+cardsGrid.addEventListener('click', (e) => {
+  const actionBtn = e.target.closest('[data-action]');
+  const cardEl = e.target.closest('.card');
+  if (!cardEl) return;
+
+  if (actionBtn) {
+    e.stopPropagation();
+    if (actionBtn.dataset.action === 'edit') editCard(cardEl.dataset.id);
+    if (actionBtn.dataset.action === 'delete') deleteCard(cardEl.dataset.id);
+    return;
+  }
+
+  const card = getActiveCards().find(c => c.id === cardEl.dataset.id);
+  if (card && card.url) openLink(card.url);
+});
+
+let lastDragTarget = null;
+const DRAG_CLASSES = ['drag-over-top', 'drag-over-bottom', 'drag-over-left', 'drag-over-right'];
+
+function clearDragIndicator() {
+  if (lastDragTarget) {
+    lastDragTarget.classList.remove(...DRAG_CLASSES);
+    lastDragTarget = null;
+  }
 }
 
-// Event listeners
+// In stacked mode cards flow vertically, in grid mode they flow horizontally,
+// so "insert before" is decided by the matching axis.
+function dropPosition(targetCard, e) {
+  const rect = targetCard.getBoundingClientRect();
+  if (settings.stackedMode) {
+    return { before: e.clientY < rect.top + rect.height / 2, axis: 'vertical' };
+  }
+  return { before: e.clientX < rect.left + rect.width / 2, axis: 'horizontal' };
+}
+
+cardsGrid.addEventListener('dragstart', (e) => {
+  const cardEl = e.target.closest('.card');
+  if (!cardEl) return;
+  draggedCardId = cardEl.dataset.id;
+  cardEl.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', draggedCardId);
+});
+
+cardsGrid.addEventListener('dragend', (e) => {
+  const cardEl = e.target.closest('.card');
+  if (cardEl) cardEl.classList.remove('dragging');
+  clearDragIndicator();
+  draggedCardId = null;
+});
+
+cardsGrid.addEventListener('dragover', (e) => {
+  if (!draggedCardId) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+
+  const targetCard = e.target.closest('.card');
+  if (!targetCard || targetCard.dataset.id === draggedCardId) {
+    clearDragIndicator();
+    return;
+  }
+
+  const { before, axis } = dropPosition(targetCard, e);
+  const cls = axis === 'vertical'
+    ? (before ? 'drag-over-top' : 'drag-over-bottom')
+    : (before ? 'drag-over-left' : 'drag-over-right');
+
+  if (lastDragTarget !== targetCard || !targetCard.classList.contains(cls)) {
+    clearDragIndicator();
+    targetCard.classList.add(cls);
+    lastDragTarget = targetCard;
+  }
+});
+
+cardsGrid.addEventListener('dragleave', (e) => {
+  if (!cardsGrid.contains(e.relatedTarget)) clearDragIndicator();
+});
+
+cardsGrid.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const targetCard = e.target.closest('.card');
+  if (!targetCard || !draggedCardId) return;
+  const targetId = targetCard.dataset.id;
+  if (targetId === draggedCardId) return;
+
+  const { before } = dropPosition(targetCard, e);
+  reorderCards(draggedCardId, targetId, before);
+});
+
+function reorderCards(draggedId, targetId, insertBefore) {
+  const cards = getActiveCards().slice();
+  const draggedIndex = cards.findIndex(c => c.id === draggedId);
+  if (draggedIndex === -1) return;
+
+  const [draggedCard] = cards.splice(draggedIndex, 1);
+  const targetIndex = cards.findIndex(c => c.id === targetId);
+  if (targetIndex === -1) return;
+
+  cards.splice(insertBefore ? targetIndex : targetIndex + 1, 0, draggedCard);
+  setActiveCards(cards);
+  saveCards();
+  renderCards();
+}
+
+// ---------------------------------------------------------------------------
+// Form controls
+// ---------------------------------------------------------------------------
 cancelBtn.addEventListener('click', hideModal);
 
-// Local image picker
 pickImageBtn.addEventListener('click', async () => {
   const filePath = await ipcRenderer.invoke('pick-image-file');
-  if (filePath) {
-    cardImageInput.value = filePath;
-  }
+  if (filePath) cardImageInput.value = filePath;
 });
 
-// Folder picker
 pickFolderBtn.addEventListener('click', async () => {
   const folderPath = await ipcRenderer.invoke('pick-folder-path');
-  if (folderPath) {
-    cardUrlInput.value = folderPath;
-  }
+  if (folderPath) cardUrlInput.value = folderPath;
 });
 
-// Color picker sync - update text input when color is picked
+// Keep the colour picker and hex text field in sync
 colorPicker.addEventListener('input', (e) => {
   cardThemeColorInput.value = e.target.value;
 });
 
-// Sync color picker when text input changes (if valid hex)
 cardThemeColorInput.addEventListener('input', (e) => {
   const value = e.target.value.trim();
   if (/^#[0-9A-F]{6}$/i.test(value)) {
@@ -559,131 +547,133 @@ cardThemeColorInput.addEventListener('input', (e) => {
   }
 });
 
-// Mode toggle buttons
-webModeBtn.addEventListener('click', () => {
-  if (activeMode !== 'web') {
-    switchMode('web');
+cardForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+
+  const cardData = {
+    title: cardTitleInput.value.trim(),
+    url: cardUrlInput.value.trim(),
+    image: cardImageInput.value.trim(),
+    themeColor: cardThemeColorInput.value.trim()
+  };
+  if (!cardData.url) return;
+
+  if (activeMode === 'web') {
+    cardData.url = normaliseWebUrl(cardData.url);
   }
-});
 
-folderModeBtn.addEventListener('click', () => {
-  if (activeMode !== 'folders') {
-    switchMode('folders');
+  if (editingCardId) {
+    updateCard(editingCardId, cardData);
+  } else {
+    addCard(cardData);
   }
+
+  hideModal();
 });
 
-// Window controls
-minimizeBtn.addEventListener('click', () => {
-  ipcRenderer.send('minimize-window');
+// Close modal when clicking outside
+cardModal.addEventListener('click', (e) => {
+  if (e.target === cardModal) hideModal();
 });
 
-closeBtn.addEventListener('click', () => {
-  ipcRenderer.send('close-window');
-});
+// ---------------------------------------------------------------------------
+// Mode toggle + window controls
+// ---------------------------------------------------------------------------
+webModeBtn.addEventListener('click', () => switchMode('web'));
+folderModeBtn.addEventListener('click', () => switchMode('folders'));
 
-// Bottom-right corner resize handle with smooth tracking
+minimizeBtn.addEventListener('click', () => ipcRenderer.send('minimize-window'));
+closeBtn.addEventListener('click', () => ipcRenderer.send('close-window'));
+
+// ---------------------------------------------------------------------------
+// Bottom-right corner resize handle
+// ---------------------------------------------------------------------------
 let isResizing = false;
-let lastX, lastY;
+let lastX = 0;
+let lastY = 0;
 let accumulatedDeltaX = 0;
 let accumulatedDeltaY = 0;
-let resizeThrottle = null;
+let resizeFrame = null;
 
-const resizeHandle = document.querySelector('.resize-handle');
+function flushResize() {
+  resizeFrame = null;
+  if (accumulatedDeltaX !== 0 || accumulatedDeltaY !== 0) {
+    ipcRenderer.send('resize-window-by', { deltaX: accumulatedDeltaX, deltaY: accumulatedDeltaY });
+    accumulatedDeltaX = 0;
+    accumulatedDeltaY = 0;
+  }
+}
 
 resizeHandle.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
   isResizing = true;
   lastX = e.screenX;
   lastY = e.screenY;
   accumulatedDeltaX = 0;
   accumulatedDeltaY = 0;
+  document.body.classList.add('resizing');
   e.preventDefault();
 });
 
 document.addEventListener('mousemove', (e) => {
   if (!isResizing) return;
-  
-  const deltaX = e.screenX - lastX;
-  const deltaY = e.screenY - lastY;
-  
+  accumulatedDeltaX += e.screenX - lastX;
+  accumulatedDeltaY += e.screenY - lastY;
   lastX = e.screenX;
   lastY = e.screenY;
-  
-  // Accumulate small movements to reduce IPC spam
-  accumulatedDeltaX += deltaX;
-  accumulatedDeltaY += deltaY;
-  
-  // Throttle resize updates for smoother performance
-  if (resizeThrottle) return;
-  
-  resizeThrottle = setTimeout(() => {
-    if (accumulatedDeltaX !== 0 || accumulatedDeltaY !== 0) {
-      ipcRenderer.send('resize-window-by', { 
-        deltaX: accumulatedDeltaX, 
-        deltaY: accumulatedDeltaY 
-      });
-      accumulatedDeltaX = 0;
-      accumulatedDeltaY = 0;
-    }
-    resizeThrottle = null;
-  }, 16); // ~60fps
-});
-
-document.addEventListener('mouseup', () => {
-  if (isResizing) {
-    isResizing = false;
-    // Send any remaining accumulated deltas
-    if (accumulatedDeltaX !== 0 || accumulatedDeltaY !== 0) {
-      ipcRenderer.send('resize-window-by', { 
-        deltaX: accumulatedDeltaX, 
-        deltaY: accumulatedDeltaY 
-      });
-    }
-    if (resizeThrottle) {
-      clearTimeout(resizeThrottle);
-      resizeThrottle = null;
-    }
+  // Batch movements into one IPC message per frame
+  if (resizeFrame === null) {
+    resizeFrame = requestAnimationFrame(flushResize);
   }
 });
 
+function stopResizing() {
+  if (!isResizing) return;
+  isResizing = false;
+  document.body.classList.remove('resizing');
+  if (resizeFrame !== null) {
+    cancelAnimationFrame(resizeFrame);
+  }
+  flushResize();
+}
+
+document.addEventListener('mouseup', stopResizing);
+window.addEventListener('blur', stopResizing);
+
+// ---------------------------------------------------------------------------
 // Context menu
+// ---------------------------------------------------------------------------
+function hideContextMenu() {
+  contextMenu.classList.add('hidden');
+}
+
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  
-  // Don't show context menu if clicking on a card, modal, or mode buttons
-  if (e.target.closest('.card') || e.target.closest('.modal') || e.target.closest('.context-menu') || e.target.closest('.mode-toggle')) {
+
+  // Don't show context menu over a card, modal, or the mode buttons
+  if (e.target.closest('.card, .modal, .context-menu, .mode-toggle, .window-controls')) {
     return;
   }
-  
-  // Smart positioning - check if menu would go off screen
-  const menuWidth = 200;
-  const menuHeight = 280;
-  let x = e.pageX;
-  let y = e.pageY;
-  
-  // Adjust horizontal position if too close to right edge
-  if (x + menuWidth > window.innerWidth) {
-    x = window.innerWidth - menuWidth - 10;
-  }
-  
-  // Adjust vertical position if too close to bottom edge
-  if (y + menuHeight > window.innerHeight) {
-    y = window.innerHeight - menuHeight - 10;
-  }
-  
+
+  // Show first so the real size can be measured, then position within the viewport.
+  // clientX/Y (not pageX/Y) because the menu is position: fixed and the body scrolls.
+  contextMenu.classList.remove('hidden');
+  const menuWidth = contextMenu.offsetWidth;
+  const menuHeight = contextMenu.offsetHeight;
+  const x = Math.max(4, Math.min(e.clientX, window.innerWidth - menuWidth - 4));
+  const y = Math.max(4, Math.min(e.clientY, window.innerHeight - menuHeight - 4));
   contextMenu.style.left = x + 'px';
   contextMenu.style.top = y + 'px';
-  contextMenu.classList.remove('hidden');
 });
 
-// Close context menu when clicking elsewhere
-document.addEventListener('click', () => {
-  contextMenu.classList.add('hidden');
-});
+// Close context menu when clicking elsewhere (clicks inside the menu don't bubble here)
+document.addEventListener('click', hideContextMenu);
+contextMenu.addEventListener('click', (e) => e.stopPropagation());
+window.addEventListener('blur', hideContextMenu);
 
-// Context menu items
 document.getElementById('addLinkItem').addEventListener('click', () => {
+  hideContextMenu();
   showAddModal();
-  contextMenu.classList.add('hidden');
 });
 
 document.getElementById('toggleViewItem').addEventListener('click', () => {
@@ -705,36 +695,26 @@ document.getElementById('toggleTransparencyItem').addEventListener('click', () =
   applySettings();
 });
 
-// Opacity slider handler
-if (opacitySlider) {
-  opacitySlider.addEventListener('input', (e) => {
-    settings.canvasOpacity = e.target.value / 100;
-    document.documentElement.style.setProperty('--canvas-opacity', settings.canvasOpacity);
-    saveSettings();
-  });
-  
-  // Prevent slider from closing menu
-  opacitySlider.addEventListener('click', (e) => {
-    e.stopPropagation();
-  });
-}
+opacitySlider.addEventListener('input', (e) => {
+  settings.canvasOpacity = Number(e.target.value) / 100;
+  document.documentElement.style.setProperty('--canvas-opacity', settings.canvasOpacity);
+});
+opacitySlider.addEventListener('change', saveSettings);
 
 document.getElementById('minimizeItem').addEventListener('click', () => {
+  hideContextMenu();
   ipcRenderer.send('minimize-window');
-  contextMenu.classList.add('hidden');
 });
 
 document.getElementById('closeItem').addEventListener('click', () => {
   ipcRenderer.send('close-window');
 });
 
-// Auto-transparency on blur - but not when opening external links
+// ---------------------------------------------------------------------------
+// Auto-transparency
+// ---------------------------------------------------------------------------
 window.addEventListener('blur', () => {
-  // Don't apply transparency if we're opening a link
-  if (window.isOpeningLink) {
-    return;
-  }
-  
+  if (window.isOpeningLink) return;
   if (settings.autoTransparency) {
     document.body.classList.add('transparent-mode');
   }
@@ -745,71 +725,63 @@ window.addEventListener('focus', () => {
 });
 
 document.body.addEventListener('mouseenter', () => {
-  if (settings.autoTransparency) {
-    document.body.classList.remove('transparent-mode');
-  }
+  document.body.classList.remove('transparent-mode');
 });
 
 document.body.addEventListener('mouseleave', () => {
-  if (settings.autoTransparency && document.hasFocus() === false) {
+  if (settings.autoTransparency && !document.hasFocus() && !window.isOpeningLink) {
     document.body.classList.add('transparent-mode');
   }
 });
 
-// Handle form submission
-cardForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  
-  const cardData = {
-    title: cardTitleInput.value.trim(),
-    url: cardUrlInput.value.trim(),
-    image: cardImageInput.value.trim(),
-    themeColor: cardThemeColorInput.value.trim()
-  };
-
-  // Only add protocol for web URLs, not folder paths
-  if (activeMode === 'web') {
-    if (!cardData.url.startsWith('http://') && !cardData.url.startsWith('https://')) {
-      cardData.url = 'https://' + cardData.url;
-    }
-  }
-
-  if (editingCardId) {
-    updateCard(editingCardId, cardData);
-  } else {
-    addCard(cardData);
-  }
-
-  hideModal();
-});
-
-// Close modal when clicking outside
-cardModal.addEventListener('click', (e) => {
-  if (e.target === cardModal) {
-    hideModal();
-  }
-});
-
+// ---------------------------------------------------------------------------
 // Keyboard shortcuts
+// ---------------------------------------------------------------------------
 document.addEventListener('keydown', (e) => {
+  const active = document.activeElement;
+  const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+  const cardModalOpen = !cardModal.classList.contains('hidden');
+  const deleteModalOpen = !deleteModal.classList.contains('hidden');
+
   if (e.key === 'Escape') {
-    if (!cardModal.classList.contains('hidden')) {
-      hideModal();
+    if (cardModalOpen) hideModal();
+    if (deleteModalOpen) hideDeleteModal();
+    hideContextMenu();
+    return;
+  }
+
+  // Ctrl/Cmd + N: new card
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+    e.preventDefault();
+    if (!cardModalOpen && !deleteModalOpen) {
+      hideContextMenu();
+      showAddModal();
     }
-    const deleteModal = document.getElementById('deleteModal');
-    if (!deleteModal.classList.contains('hidden')) {
-      deleteModal.classList.add('hidden');
-    }
-    if (!contextMenu.classList.contains('hidden')) {
-      contextMenu.classList.add('hidden');
+    return;
+  }
+
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  if (deleteModalOpen && e.key === 'Enter') {
+    e.preventDefault();
+    deleteConfirmBtn.click();
+    return;
+  }
+
+  // Tab switching hotkeys (only when not typing and no modal open)
+  if (!isTyping && !cardModalOpen && !deleteModalOpen) {
+    const key = e.key.toLowerCase();
+    if (key === 'w') {
+      switchMode('web');
+    } else if (key === 'f') {
+      switchMode('folders');
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      switchMode(activeMode === 'web' ? 'folders' : 'web');
     }
   }
 });
 
-// Make functions globally available
-window.openLink = openLink;
-window.editCard = editCard;
-window.deleteCard = deleteCard;
-
-// Initialize
+// ---------------------------------------------------------------------------
+// Initialise
+// ---------------------------------------------------------------------------
 loadCards();

@@ -3,22 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LinkBoard</title>
+  <title>DS Linkstack</title>
   <link rel="stylesheet" href="styles.css">
-  <script>
-    // Load opacity setting immediately to prevent grey flash
-    try {
-      const savedSettings = localStorage.getItem('linkboardSettings');
-      if (savedSettings) {
-        const settings = JSON.parse(savedSettings);
-        if (settings.canvasOpacity !== undefined) {
-          document.documentElement.style.setProperty('--canvas-opacity', settings.canvasOpacity);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load initial settings:', e);
-    }
-  </script>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: http: file: data:">
+  <script src="init.js"></script>
 </head>
 <body>
   <!-- Window background wrapper for rounded corners -->
@@ -102,9 +90,9 @@
         </div>
 
         <div class="form-group">
-          <label for="cardImage">Image URL (optional)</label>
+          <label for="cardImage">Image URL or file (optional)</label>
           <div style="display: flex; gap: 8px;">
-            <input type="url" id="cardImage" placeholder="https://example.com/image.jpg" style="flex: 1;">
+            <input type="text" id="cardImage" placeholder="https://example.com/image.jpg or C:\Images\cover.png" style="flex: 1;">
             <button type="button" id="pickImageBtn" class="btn btn-secondary" style="padding: 8px 12px; white-space: nowrap;">Browse Image</button>
           </div>
         </div>
@@ -113,7 +101,7 @@
           <label for="cardThemeColor">Theme Color (optional hex code)</label>
           <div style="display: flex; gap: 8px;">
             <input type="text" id="cardThemeColor" placeholder="#808080" style="flex: 1;">
-            <input type="color" id="colorPicker" class="color-picker-input" title="Pick a color">
+            <input type="color" id="colorPicker" value="#808080" class="color-picker-input" title="Pick a color">
           </div>
           <small style="color: #888; font-size: 0.8rem;">Used for title and default card background</small>
         </div>

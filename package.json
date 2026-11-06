@@ -1,0 +1,53 @@
+{
+  "name": "ds-linkstack",
+  "version": "3.16.0",
+  "description": "DS Linkstack - a desktop app for organizing website links and project folders",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --inspect=5858",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.dsblack.dslinkstack",
+    "productName": "DS Linkstack",
+    "icon": "icon.png",
+    "files": [
+      "main.js",
+      "init.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "icon.png",
+      "icon@2x.png"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "icon.png",
+      "category": "Utility"
+    }
+  },
+  "keywords": [
+    "electron",
+    "links",
+    "bookmarks",
+    "folders"
+  ],
+  "author": "D.S. Black",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}

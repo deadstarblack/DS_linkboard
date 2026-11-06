@@ -1,8 +1,7 @@
-        # Ignore the 'dist' directory
-        dist/
-        node_modules/
+# Build output and dependencies
+dist/
+node_modules/
 
-        # Ignore specific files
-        BUILD_INSTRUCTIONS.txt
-        BUILD_PACKAGE.zip
-        CHANGELOG.md
+# Local-only files
+BUILD_INSTRUCTIONS.txt
+BUILD_PACKAGE.zip
