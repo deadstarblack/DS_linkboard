@@ -66,19 +66,22 @@ The built apps will be in the `dist` folder. The portable .exe for Windows doesn
 ### Basic Operations
 1. **W button** - Switch to Web Links mode
 2. **F button** - Switch to Folder Paths mode
-3. **Right-click** on canvas - Add new link/folder or access settings
-4. **Click any card** - Open that website or folder
-5. **Hover over cards** - See Edit (e) and Delete (x) buttons
+3. **W / F keys or Left / Right arrows** - Switch mode from the keyboard
+4. **Right-click** on canvas - Add new link/folder or access settings
+5. **Click any card** - Open that website or folder
+6. **Hover over cards** - See Edit (e) and Delete (x) buttons
+7. **Drag cards** - Reorder them
 
 ### Adding Links/Folders
 - **Title** - What you want to call this item
 - **URL/Path** - Website address (e.g., `example.com`) or folder path
 - **Image** (optional) - Image URL, a local file path (e.g. `C:\Images\cover.png`), or browse for one
-- **Theme Color** (optional) - Hex color for card styling
+- **Favicons** - Web links with no image fall back to the site's favicon
+- **Theme Color** (optional) - Hex color for card styling; clear the field to go back to default
 
 ### Settings (Right-click menu)
 - **Stacked Mode** - Toggle between grid and list view
-- **Always on Top** - Keep LinkBoard above other windows
+- **Always on Top** - Keep DS Linkstack above other windows
 - **Auto-Transparency** - App becomes transparent when unfocused
 - **Canvas Opacity** - Adjust background opacity
 
